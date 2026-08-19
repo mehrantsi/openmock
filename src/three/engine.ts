@@ -46,6 +46,7 @@ import {
 } from './cameraRig'
 import { loadDeviceModel, applyModelFrame } from './devices/loader'
 import { DeviceScreenComposer } from './devices/deviceScreen'
+import { webkitVideoPresentQuirk } from '../lib/browser'
 
 /** Engine with OpenMock extensions beyond the base contract. */
 export interface OpenMockEngine extends Engine {
@@ -350,8 +351,10 @@ export function createEngine(canvas: HTMLCanvasElement, opts: EngineOptions = {}
     if (width <= 0 || height <= 0) return
     const aspect = width / height
 
-    // pre-drawn export frames must re-upload every render
-    if (mediaKind === 'frame' && mediaTexture) mediaTexture.needsUpdate = true
+    // canvas frames have no change signal; VideoTexture relies on
+    // requestVideoFrameCallback, which Safari doesn't fire for paused seeks
+    if ((mediaKind === 'frame' || (mediaKind === 'video' && webkitVideoPresentQuirk)) && mediaTexture)
+      mediaTexture.needsUpdate = true
 
     lighting.applyEnvironment(params.environment || null)
     const preset = lighting.currentPreset

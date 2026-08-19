@@ -57,6 +57,7 @@ import {
   shutterSampleTimes,
   type CameraMotionSample,
 } from './motionBlur'
+import { webkitVideoPresentQuirk } from '../lib/browser'
 
 export interface VideoExportArgs {
   scenes: Shot[]
@@ -162,6 +163,9 @@ function loadVideoElement(blob: Blob): Promise<VideoPoolEntry> {
     el.muted = true
     el.playsInline = true
     el.preload = 'auto'
+    // Safari presents seeked frames unreliably for detached elements
+    el.style.cssText = 'position:fixed;left:-99999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none'
+    document.body.appendChild(el)
     const cleanup = () => {
       clearTimeout(timer)
       el.removeEventListener('loadeddata', onReady)
@@ -169,6 +173,7 @@ function loadVideoElement(blob: Blob): Promise<VideoPoolEntry> {
     }
     const timer = setTimeout(() => {
       cleanup()
+      el.remove()
       URL.revokeObjectURL(url)
       reject(new Error('Timed out waiting for video loadeddata'))
     }, 15000)
@@ -181,6 +186,7 @@ function loadVideoElement(blob: Blob): Promise<VideoPoolEntry> {
     }
     const onError = () => {
       cleanup()
+      el.remove()
       URL.revokeObjectURL(url)
       reject(new Error(`Video decode failed (${el.error?.code ?? 0})`))
     }
@@ -190,27 +196,75 @@ function loadVideoElement(blob: Blob): Promise<VideoPoolEntry> {
   })
 }
 
+/**
+ * Safari presents the seeked frame after `seeked` fires, so a capture must
+ * also wait for the presentation callback or it samples the previous frame.
+ * Chromium presents by `seeked` and keeps the fast path.
+ */
+const needsPresentWait =
+  webkitVideoPresentQuirk &&
+  typeof HTMLVideoElement !== 'undefined' &&
+  'requestVideoFrameCallback' in HTMLVideoElement.prototype
+
+/**
+ * Presentation-wait cap: a seek landing inside the already-presented source
+ * frame never presents a new one and must not stall the export.
+ */
+const PRESENT_GRACE_MS = 40
+
+interface PresentedFrame {
+  mediaTime: number
+  frameDur: number
+}
+const presentedFrames = new WeakMap<HTMLVideoElement, PresentedFrame>()
+
 /** Seek a hidden video element and wait for the frame to land (5 s timeout). */
 function seekVideo(el: HTMLVideoElement, t: number): Promise<void> {
   const dur = Number.isFinite(el.duration) ? el.duration : Infinity
   const target = Math.max(0, Math.min(t, dur - 0.001))
   if (Math.abs(el.currentTime - target) < 1e-4 && el.readyState >= 2) return Promise.resolve()
+  const known = needsPresentWait ? presentedFrames.get(el) : undefined
+  const targetAlreadyPresented =
+    !!known && known.frameDur > 0 && target >= known.mediaTime && target < known.mediaTime + known.frameDur
   return new Promise((resolve, reject) => {
     let done = false
+    let presented = false
+    let seeked = false
+    let graceTimer: ReturnType<typeof setTimeout> | undefined
     const finish = (err?: Error) => {
       if (done) return
       done = true
       clearTimeout(timer)
+      if (graceTimer !== undefined) clearTimeout(graceTimer)
       el.removeEventListener('seeked', onSeeked)
       el.removeEventListener('error', onError)
       if (err) reject(err)
       else resolve()
     }
     const timer = setTimeout(() => finish(new Error('Timed out waiting for video seeked')), SEEK_TIMEOUT_MS)
-    const onSeeked = () => finish()
+    const onSeeked = () => {
+      seeked = true
+      if (!needsPresentWait || presented || targetAlreadyPresented) finish()
+      else graceTimer = setTimeout(() => finish(), PRESENT_GRACE_MS)
+    }
     const onError = () => finish(new Error(`Video decode failed (${el.error?.code ?? 0})`))
     el.addEventListener('seeked', onSeeked)
     el.addEventListener('error', onError)
+    if (needsPresentWait) {
+      // one-shot; deliberately not cancelled on finish so late presentations
+      // still record their mediaTime for the same-frame check above
+      el.requestVideoFrameCallback((_now, meta) => {
+        const prev = presentedFrames.get(el)
+        const delta = prev ? meta.mediaTime - prev.mediaTime : 0
+        presentedFrames.set(el, {
+          mediaTime: meta.mediaTime,
+          frameDur:
+            delta > 1e-4 ? (prev && prev.frameDur > 0 ? Math.min(prev.frameDur, delta) : delta) : (prev?.frameDur ?? 0),
+        })
+        presented = true
+        if (seeked) finish()
+      })
+    }
     el.currentTime = target
   })
 }
@@ -781,8 +835,9 @@ export async function exportVideo(args: VideoExportArgs): Promise<VideoExportRes
       try {
         entry.el.load()
       } catch {
-        // detached element — nothing to do
+        // already torn down — nothing to do
       }
+      entry.el.remove()
       URL.revokeObjectURL(entry.url)
     }
     for (const entry of imageCache.values()) entry.bitmap.close()

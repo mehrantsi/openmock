@@ -14,6 +14,7 @@ import type { Shot } from '../state/types'
 import { canvasLength, frameStackAtTime, sampleShotState, totalDuration } from './timelineOps'
 import { clipSourceTime, clipTrimLength, VIDEO_FRAME_EPS } from './videoClock'
 import { getMediaUrl } from '../lib/media'
+import { requestViewportRender } from '../ui/viewport/engineRef'
 
 /** Throttle for React `projectTime` pushes while playing / scrub-previewing. */
 const REACT_PUSH_MS = 150
@@ -94,6 +95,12 @@ export function useShotVideoElements(): ShotVideoElements {
       el.playsInline = true
       el.preload = 'auto'
       el.style.display = 'none'
+      // the viewport renders on demand — repaint when a parked seek lands.
+      // Not while scrubbing: that repaint uses the committed playhead state
+      // and fights the scrub preview's pose
+      el.addEventListener('seeked', () => {
+        if (!usePlayback.getState().scrubbing) requestViewportRender()
+      })
       entry = { el, url: null }
       pool.set(videoId, entry)
       void getMediaUrl(`media:${videoId}`).then((url) => {
