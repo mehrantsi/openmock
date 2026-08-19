@@ -1,0 +1,23 @@
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/hdri/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/textures/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/basis/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/defaults/*
+  Cache-Control: public, max-age=86400
+
+/backgrounds/*
+  Cache-Control: public, max-age=86400
+
+/device-thumbs/*
+  Cache-Control: public, max-age=86400
+
+/*
+  X-Content-Type-Options: nosniff

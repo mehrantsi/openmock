@@ -1,0 +1,14 @@
+{
+  "name": "OpenMock",
+  "short_name": "OpenMock",
+  "description": "Put your screenshots on 3D devices and turn them into promo videos, right in the browser.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "theme_color": "#e0e0e0",
+  "background_color": "#e0e0e0",
+  "icons": [
+    { "src": "/pwa-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/pwa-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
