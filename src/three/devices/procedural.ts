@@ -1191,7 +1191,8 @@ function buildMacbookPro(def: MockupModelDef, screenMaterial: THREE.MeshPhysical
   const faceAspect = isNeo ? 2408 / 1506 : is16 ? 3456 / 2234 : 3024 / 1964
   const W = 2.0
   const Dbase = isNeo ? 1.4 : is16 ? 1.395 : 1.415
-  const th = isNeo ? 0.072 : is16 ? 0.094 : 0.099
+  // real base/width ratios: 14" ~3.1%, 16" ~3.0%, slim consumer body ~2.4%
+  const th = isNeo ? 0.048 : is16 ? 0.06 : 0.062
   // real-device deck proportions: the Pro sizes share the same absolute
   // keyboard (so the 14" well fills more of its width and its grilles are much
   // narrower); the Neo is a slim consumer body with no visible grilles
@@ -1251,7 +1252,7 @@ function buildMacbookPro(def: MockupModelDef, screenMaterial: THREE.MeshPhysical
   }
 
   // --- lid (built closed, opened by rotating lidBody; engine drives pivot) --
-  const lidTh = 0.042
+  const lidTh = isNeo ? 0.028 : 0.036
   const Dlid = isNeo ? 1.32 : is16 ? 1.36 : 1.375
   const Sw2 = W - 2 * 0.035
   const Sh2 = Sw2 / faceAspect
