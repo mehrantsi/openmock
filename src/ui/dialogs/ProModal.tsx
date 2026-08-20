@@ -120,11 +120,27 @@ export function ProModal() {
               <span className="text-black/50 dark:text-white/45">Plan</span>
               <span className="font-mono text-[11px] capitalize">{license.entitlement?.plan ?? 'pro'}</span>
             </div>
-            <div className="flex items-center justify-between h-8">
+            <div className="flex items-center justify-between h-8 border-b border-black/[0.06] dark:border-white/[0.06]">
               <span className="text-black/50 dark:text-white/45">Status</span>
               <span className="font-mono text-[11px] capitalize">{license.entitlement?.status ?? 'active'}</span>
             </div>
+            <div className="flex items-center justify-between h-8 gap-3">
+              <span className="text-black/50 dark:text-white/45 shrink-0">License key</span>
+              <button
+                title="Copy license key"
+                onClick={() => {
+                  if (!license.key) return
+                  void navigator.clipboard.writeText(license.key).then(() => toast('License key copied.', 'success'))
+                }}
+                className="font-mono text-[11px] truncate text-black/75 dark:text-white/75 hover:text-accent"
+              >
+                {license.key}
+              </button>
+            </div>
           </div>
+          <p className="text-[10px] leading-snug text-black/40 dark:text-white/35 mt-1">
+            Click the key to copy it. Paste it in OpenMock on another device to activate Pro there.
+          </p>
           {license.devices && license.devices.length > 0 && (
             <>
               <ModalSection label={`Devices (${license.devices.length} of 3)`} />
