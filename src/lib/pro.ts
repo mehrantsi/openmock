@@ -9,8 +9,8 @@ export const PRO_PRICES = { monthly: '$5', yearly: '$36' }
  * https://openmock.app/activate?session_id={CHECKOUT_SESSION_ID} after payment.
  */
 export const PAYMENT_LINKS: Record<'monthly' | 'yearly', string> = {
-  monthly: 'https://buy.stripe.com/bJe7sM9JX8N00B1bLn9IQ00',
-  yearly: 'https://buy.stripe.com/3cIfZi2hvgfs83t7v79IQ01',
+  monthly: 'https://buy.stripe.com/3cI9AU1draV82J95mZ9IQ02',
+  yearly: 'https://buy.stripe.com/eVqcN61drfbo1F52aN9IQ03',
 }
 
 export const FREE_MAX_VIDEO_EDGE = 1280

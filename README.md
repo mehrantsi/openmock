@@ -6,7 +6,7 @@ Put your screenshots on 3D devices and turn them into promo videos, right in the
 
 OpenMock places a screenshot or screen recording on a 3D device, lets you frame it with a camera, add depth of field and other effects, animate everything on a keyframe timeline, and export an image or a video. It all runs client side. No account, no server, no uploads.
 
-Images export free at full quality with no watermark. Free video exports go up to 720p 30 fps and carry a small watermark. Pro is $5 a month or $36 a year plus local tax, removes the watermark, and unlocks 1080p, 4K and 60 fps. The source is open, so you can also build the unlocked version yourself. That is allowed and genuinely fine. Paying is the convenient way that keeps the project maintained.
+Images export free at full quality with no watermark. Free video exports go up to 720p 30 fps and carry a small watermark. Pro is $5 a month or $36 a year, removes the watermark, and unlocks 1080p, 4K and 60 fps. The source is open, so you can also build the unlocked version yourself. That is allowed and genuinely fine. Paying is the convenient way that keeps the project maintained.
 
 ![OpenMock editor](.github/screenshot.png)
 

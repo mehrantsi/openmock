@@ -220,7 +220,7 @@ export function ProModal() {
             <PriceCard plan="yearly" price={PRO_PRICES.yearly} per="/ year" note="2 months free" />
           </div>
           <p className="text-[10px] text-black/40 dark:text-white/35 mt-1.5">
-            Prices exclude VAT and sales tax where applicable.
+            Prices include VAT where applicable.
           </p>
           <p className="text-[10.5px] leading-relaxed text-black/45 dark:text-white/40 mt-3">
             OpenMock is fair source. You can also build Pro from the source yourself, and that is
