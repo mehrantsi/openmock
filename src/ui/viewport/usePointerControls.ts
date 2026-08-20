@@ -1,6 +1,7 @@
 /**
  * Viewport camera interaction (no OrbitControls):
- * - 1-pointer drag: tiltY += 0.5·dx, tiltX += 0.5·dy (flat ±70/±60, 3D ±180)
+ * - 1-pointer drag: tiltY += 0.5·dx, tiltX += 0.5·dy (flat ±70/±60, 3D pitch
+ *   ±180 with unbounded yaw)
  * - Space- or Alt-drag: panX += 0.001·dx·zoom, panY −= 0.001·dy·zoom, clamp ±3,
  *   with snap-to-center (enter |v| < 0.0025·zoom, release > 0.0035·zoom)
  * - Wheel: zoom = clamp(zoom + 0.005·ΔY, 0.5, 10), committed 150 ms after the
@@ -113,8 +114,12 @@ export function usePointerControls(
 
     const tiltLimits = () => {
       const model = !!useProject.getState().dials.mockupModel
-      return model ? { x: 180, y: 180 } : { x: 70, y: 60 }
+      return model ? { x: 180, y: Infinity } : { x: 70, y: 60 }
     }
+
+    // unbounded yaw for 3D devices: the angle accumulates across turns so
+    // keyframed spins play through 360 instead of snapping the short way back
+    const tiltYFrom = (raw: number, limY: number) => (Number.isFinite(limY) ? clamp(raw, -limY, limY) : raw)
 
     const snapAxis = (v: number, snapped: boolean, zoom: number): [number, boolean] => {
       if (!useSettings.getState().snapToCenter) return [v, false]
@@ -180,7 +185,7 @@ export function usePointerControls(
         const lim = tiltLimits()
         const d = p.dials
         const patch: Partial<RenderState> = {
-          tiltY: clamp(d.tiltY + 0.5 * (mid.x - st.lastMid.x), -lim.y, lim.y),
+          tiltY: tiltYFrom(d.tiltY + 0.5 * (mid.x - st.lastMid.x), lim.y),
           tiltX: clamp(d.tiltX + 0.5 * (mid.y - st.lastMid.y), -lim.x, lim.x),
           zoom: clamp(d.zoom - 0.005 * (dist - st.lastDist), 0.5, 10),
         }
@@ -205,7 +210,7 @@ export function usePointerControls(
         const lim = tiltLimits()
         p.setDials(
           {
-            tiltY: clamp((st.base.tiltY ?? 0) + 0.5 * dx, -lim.y, lim.y),
+            tiltY: tiltYFrom((st.base.tiltY ?? 0) + 0.5 * dx, lim.y),
             tiltX: clamp((st.base.tiltX ?? 0) + 0.5 * dy, -lim.x, lim.x),
           },
           { transient: true },
