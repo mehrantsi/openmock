@@ -13,6 +13,10 @@ interface UIState {
   setShortcutsOpen: (open: boolean) => void
   aboutOpen: boolean
   setAboutOpen: (open: boolean) => void
+  proOpen: boolean
+  setProOpen: (open: boolean) => void
+  freeTipOpen: boolean
+  setFreeTipOpen: (open: boolean) => void
 }
 
 const mq = typeof window !== 'undefined' ? window.matchMedia('(prefers-color-scheme: dark)') : null
@@ -46,6 +50,10 @@ export const useUI = create<UIState>((set) => ({
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   aboutOpen: false,
   setAboutOpen: (aboutOpen) => set({ aboutOpen }),
+  proOpen: false,
+  setProOpen: (proOpen) => set({ proOpen }),
+  freeTipOpen: false,
+  setFreeTipOpen: (freeTipOpen) => set({ freeTipOpen }),
 }))
 
 // keep in sync with the OS when in system mode

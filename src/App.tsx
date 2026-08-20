@@ -25,7 +25,11 @@ import { ShortcutsModal } from './ui/dialogs/ShortcutsModal'
 import { PreferencesModal } from './ui/dialogs/PreferencesModal'
 import { InfoModal } from './ui/dialogs/InfoModal'
 import { PasteModal } from './ui/dialogs/PasteModal'
+import { ProModal } from './ui/dialogs/ProModal'
+import { FreeExportTip } from './ui/dialogs/FreeExportTip'
 import { ScreenGate, useScreenTooSmall } from './ui/chrome/ScreenGate'
+import { maybeRefreshLicense, useLicense } from './state/license'
+import { toast } from './ui/toast'
 
 // hydrate the persisted project before anything renders
 useProject.getState().hydrate()
@@ -57,6 +61,27 @@ export default function App() {
 
   // background services (the timeline panel mounts the keyframe recorder)
   useMediaIngest()
+
+  // license: claim on the post-checkout redirect, otherwise revalidate quietly
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (url.pathname === '/activate') {
+      const sessionId = url.searchParams.get('session_id')
+      window.history.replaceState(null, '', '/')
+      if (sessionId) {
+        void useLicense
+          .getState()
+          .claim(sessionId)
+          .then((err) => {
+            useUI.getState().setProOpen(true)
+            if (err) toast(err, 'error')
+            else toast('Pro is active. Your license key is saved on this device.', 'success', 5000)
+          })
+        return
+      }
+    }
+    maybeRefreshLicense()
+  }, [])
 
   // global keyboard shortcuts
   useEffect(() => {
@@ -138,6 +163,8 @@ export default function App() {
         <ShortcutsModal />
         <PreferencesModal />
         <InfoModal />
+        <ProModal />
+        <FreeExportTip />
         <PasteModal />
         <ToastViewport />
       </TimelineCtx.Provider>

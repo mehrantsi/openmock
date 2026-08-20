@@ -7,6 +7,7 @@ export const KEY_HEIGHT = 'openmock-timeline-height'
 export const KEY_EXPANDED = 'openmock-timeline-shot-expanded'
 export const KEY_GAP_TIP = 'openmock-gap-tip-seen'
 export const KEY_RECORD_GUIDE = 'openmock-record-guide-seen'
+export const KEY_FREE_EXPORT_TIP = 'openmock-free-export-tip-seen'
 export const KEY_CENTER_GUIDES = 'openmock-snap-center-enabled'
 
 export function readNumber(key: string, fallback: number): number {

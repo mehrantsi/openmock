@@ -1,6 +1,7 @@
 /**
  * Export popover (Image | Video tabs) + the floating export progress pill.
- * No gating, no watermark — every size/quality/fps option is available.
+ * Images export ungated; free-tier video is capped (1080p, 30 fps, watermark)
+ * with Pro unlocking the rest.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -30,6 +31,17 @@ import { requestViewportRender } from '../viewport/engineRef'
 import { playSuccess } from '../chrome/sounds'
 import { sceneAtTime } from '../../video/timelineOps'
 import type { ImageExportOptions, MotionBlurLevel, VideoQuality } from '../../state/types'
+import { useIsPro } from '../../state/license'
+import { KEY_FREE_EXPORT_TIP, readFlag } from '../timeline/persist'
+import { FREE_MAX_VIDEO_EDGE, videoSizeNeedsPro } from '../../lib/pro'
+
+function ProChip() {
+  return (
+    <span className="ml-2 shrink-0 px-1.5 py-[1px] rounded-full bg-accent/12 text-accent text-[9px] font-semibold">
+      PRO
+    </span>
+  )
+}
 
 type Orientation = 'landscape' | 'square' | 'portrait'
 
@@ -103,11 +115,15 @@ function SizeDropdown({
   orientation,
   value,
   onChange,
+  locked,
+  onLocked,
 }: {
   kind: 'image' | 'video'
   orientation: Orientation
   value: string
   onChange: (size: string) => void
+  locked?: (size: string) => boolean
+  onLocked?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -129,17 +145,19 @@ function SizeDropdown({
   const item = (size: string) => {
     const r = lookupResolution(size, kind)
     if (!r) return null
+    const isLocked = locked?.(size) ?? false
     return (
       <button
         key={size}
         onClick={() => {
-          onChange(size)
           setOpen(false)
+          if (isLocked) onLocked?.()
+          else onChange(size)
         }}
         className="w-full h-[30px] px-2.5 rounded-md flex items-center justify-between text-[11px] text-black/70 dark:text-white/70 hover:bg-black/[0.05] dark:hover:bg-white/[0.07]"
       >
         <span className="truncate">{r.label}</span>
-        {value === size && <Check className="size-3 text-[#FD631F]" />}
+        {isLocked ? <ProChip /> : value === size && <Check className="size-3 text-[#FD631F]" />}
       </button>
     )
   }
@@ -362,6 +380,9 @@ function ImageTab({ onStarted }: { onStarted: () => void }) {
 
 function VideoTab({ onStarted }: { onStarted: () => void }) {
   const ex = useExportApi()
+  const pro = useIsPro()
+  const setProOpen = useUI((s) => s.setProOpen)
+  const setFreeTipOpen = useUI((s) => s.setFreeTipOpen)
   const opts = useProject((s) => s.exportOptions)
   const setOpts = useProject((s) => s.setExportOptions)
   const scenes = useProject((s) => s.scenes)
@@ -409,6 +430,7 @@ function VideoTab({ onStarted }: { onStarted: () => void }) {
 
   const { width, height } = resolveExportSize(opts.size, opts.customWidth, opts.customHeight, 'video')
   const mbps = Math.round(videoBitrate(opts.quality, width, height) / 1e6)
+  const effFps = !pro && opts.fps === 60 ? 30 : opts.fps
 
   return (
     <div className="flex flex-col gap-3">
@@ -435,6 +457,8 @@ function VideoTab({ onStarted }: { onStarted: () => void }) {
             const o = orientationOf(size)
             if (o) setOrientation(o)
           }}
+          locked={(size) => !pro && videoSizeNeedsPro(size, opts.customWidth, opts.customHeight)}
+          onLocked={() => setProOpen(true)}
         />
       </div>
 
@@ -465,12 +489,18 @@ function VideoTab({ onStarted }: { onStarted: () => void }) {
       <div>
         <Label>Frame rate</Label>
         <Segmented
-          value={String(opts.fps) as '30' | '60'}
+          value={String(effFps) as '30' | '60'}
           options={[
             { value: '30' as const, label: '30 fps' },
-            { value: '60' as const, label: '60 fps' },
+            { value: '60' as const, label: pro ? '60 fps' : '60 fps · Pro' },
           ]}
-          onChange={(v) => setOpts({ fps: v === '30' ? 30 : 60 })}
+          onChange={(v) => {
+            if (v === '60' && !pro) {
+              setProOpen(true)
+              return
+            }
+            setOpts({ fps: v === '30' ? 30 : 60 })
+          }}
         />
       </div>
 
@@ -493,16 +523,38 @@ function VideoTab({ onStarted }: { onStarted: () => void }) {
         <div className="text-[12px] font-semibold tabular-nums">
           {width} × {height}
           <span className="ml-2 text-[10px] font-medium text-black/45 dark:text-white/40">
-            {opts.fps} fps · ~{mbps} Mbps
+            {effFps} fps · ~{mbps} Mbps
           </span>
         </div>
         <div className="text-[10px] text-black/45 dark:text-white/40">{QUALITY_DESC[opts.quality]}</div>
       </div>
 
+      {!pro && (
+        <div className="flex items-center justify-between rounded-md bg-accent/[0.08] px-2.5 py-2">
+          <span className="text-[10px] leading-snug text-black/60 dark:text-white/55">
+            Free video exports include a watermark
+            {Math.max(width, height) > FREE_MAX_VIDEO_EDGE
+              ? ` and will be scaled down to ${FREE_MAX_VIDEO_EDGE}px`
+              : ''}
+            . Images are always free.
+          </span>
+          <button
+            onClick={() => setProOpen(true)}
+            className="shrink-0 ml-2 text-[10.5px] font-semibold text-accent hover:underline"
+          >
+            Get Pro
+          </button>
+        </div>
+      )}
+
       <button
         disabled={busy}
         onClick={() => {
           onStarted()
+          if (!pro && !readFlag(KEY_FREE_EXPORT_TIP)) {
+            setFreeTipOpen(true)
+            return
+          }
           void ex?.exportVideoNow()
         }}
         className="h-9 rounded-lg bg-zinc-900 text-white dark:bg-white dark:text-black text-[12px] font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity"

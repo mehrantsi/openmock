@@ -73,6 +73,8 @@ export interface VideoExportArgs {
    * live preview. Omitted -> captureScale 1.
    */
   previewWidth?: number
+  /** Free tier: stamp a translucent centered openmock.app mark onto every frame. */
+  watermark?: boolean
   getMediaBlob(key: string): Promise<Blob | undefined>
   onProgress(p: number): void
   signal: AbortSignal
@@ -148,6 +150,21 @@ function loadImageEl(url: string): Promise<HTMLImageElement> {
     img.onerror = () => reject(new Error('Could not load background image.'))
     img.src = url
   })
+}
+
+function drawWatermark(ctx: CanvasRenderingContext2D, w: number, h: number, mark: HTMLImageElement | null): void {
+  if (!mark || !(mark.naturalWidth > 0)) return
+  const aspect = mark.naturalWidth / mark.naturalHeight
+  let mw = w * 0.44
+  if (mw / aspect > h * 0.26) mw = h * 0.26 * aspect
+  const mh = mw / aspect
+  ctx.save()
+  ctx.globalAlpha = 0.5
+  // soft dark halo keeps the white lockup readable on light footage
+  ctx.shadowColor = 'rgba(0,0,0,0.6)'
+  ctx.shadowBlur = mh * 0.14
+  ctx.drawImage(mark, (w - mw) / 2, (h - mh) / 2, mw, mh)
+  ctx.restore()
 }
 
 interface VideoPoolEntry {
@@ -302,7 +319,8 @@ function nearestSceneIndex(scenes: Shot[], pt: number): { index: number; edgeT: 
 }
 
 export async function exportVideo(args: VideoExportArgs): Promise<VideoExportResult> {
-  const { scenes, videos, audios, audioClips, fadeIn, fadeOut, options, getMediaBlob, onProgress, signal } = args
+  const { scenes, videos, audios, audioClips, fadeIn, fadeOut, options, watermark, getMediaBlob, onProgress, signal } =
+    args
 
   if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') {
     throw new Error(VIDEO_EXPORT_UNSUPPORTED_MESSAGE)
@@ -328,6 +346,7 @@ export async function exportVideo(args: VideoExportArgs): Promise<VideoExportRes
   const shotMedia = new Map<string, ShotScreenMedia>()
   const videoPool = new Map<string, VideoPoolEntry>()
   const imageCache = new Map<string, { bitmap: ImageBitmap; isDark?: boolean; average?: string }>()
+  const watermarkImg = watermark ? await loadImageEl('/brand/watermark.png').catch(() => null) : null
   const bgImageCache = new Map<string, HTMLImageElement>()
   const logoImages = new Map<string, LogoImageSource | null>()
 
@@ -798,6 +817,14 @@ export async function exportVideo(args: VideoExportArgs): Promise<VideoExportRes
           src = out
         }
         drawOverlayLayers(stack.overlays)
+      }
+
+      if (watermark) {
+        if (src !== out) {
+          ctx.drawImage(src, 0, 0)
+          src = out
+        }
+        drawWatermark(ctx, width, height, watermarkImg)
       }
 
       const frame = new VideoFrame(src, {

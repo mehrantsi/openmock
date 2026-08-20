@@ -1,0 +1,7 @@
+name = "openmock"
+compatibility_date = "2026-08-01"
+pages_build_output_dir = "dist"
+
+[[kv_namespaces]]
+binding = "LICENSES"
+id = "528e19f540d14a82a6330653d3dafd7b"

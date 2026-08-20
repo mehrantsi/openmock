@@ -31,6 +31,7 @@ export function MasterMenu() {
   const setTimelineVisible = usePlayback((s) => s.setTimelineVisible)
   const setAboutOpen = useUI((s) => s.setAboutOpen)
   const setShortcutsOpen = useUI((s) => s.setShortcutsOpen)
+  const setProOpen = useUI((s) => s.setProOpen)
   const setPreferencesOpen = useDialogs((s) => s.setPreferencesOpen)
 
   return (
@@ -66,6 +67,9 @@ export function MasterMenu() {
           </DropdownMenu.CheckboxItem>
           <DropdownMenu.Item className={menuItemCls} onSelect={() => setPreferencesOpen(true)}>
             Preferences
+          </DropdownMenu.Item>
+          <DropdownMenu.Item className={menuItemCls} onSelect={() => setProOpen(true)}>
+            OpenMock Pro <span className="text-[9px] font-semibold text-accent">PRO</span>
           </DropdownMenu.Item>
           <DropdownMenu.Separator className={menuSepCls} />
           <DropdownMenu.Item className={menuItemCls} onSelect={() => setAboutOpen(true)}>

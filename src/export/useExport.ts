@@ -34,6 +34,8 @@ import { DEFAULT_LOGO_STYLE, rasterizeLogo, renderLogoShotToCanvas } from '../sh
 import { exportImage, transcodeToWebp } from './image'
 import { exportVideo } from './video'
 import { resolveExportSize } from './resolutions'
+import { isProNow } from '../state/license'
+import { FREE_MAX_FPS, FREE_MAX_VIDEO_EDGE } from '../lib/pro'
 import { imageFilename, saveBlob, videoFilename } from './download'
 
 // ---------------------------------------------------------------------------
@@ -298,6 +300,22 @@ export function useExport(): UseExportApi {
     setState((s) => ({ ...s, phase: 'rendering', progress: 0, error: null }))
     try {
       const previewWidth = viewportEngine?.getSize().width
+      const pro = isProNow()
+      let options = p.exportOptions
+      if (!pro) {
+        const { width, height } = resolveExportSize(options.size, options.customWidth, options.customHeight, 'video')
+        const edge = Math.max(width, height)
+        if (edge > FREE_MAX_VIDEO_EDGE) {
+          const k = FREE_MAX_VIDEO_EDGE / edge
+          options = {
+            ...options,
+            size: 'custom',
+            customWidth: Math.round((width * k) / 2) * 2,
+            customHeight: Math.round((height * k) / 2) * 2,
+          }
+        }
+        if (options.fps > FREE_MAX_FPS) options = { ...options, fps: FREE_MAX_FPS }
+      }
       const result = await exportVideo({
         scenes: p.scenes,
         videos: p.videos,
@@ -305,7 +323,8 @@ export function useExport(): UseExportApi {
         audioClips: p.audioClips,
         fadeIn: p.fadeIn,
         fadeOut: p.fadeOut,
-        options: p.exportOptions,
+        options,
+        watermark: !pro,
         previewWidth: previewWidth && previewWidth > 0 ? previewWidth : undefined,
         getMediaBlob,
         onProgress: (progress) =>

@@ -25,7 +25,7 @@ export function InfoModal() {
       <p className="text-[12px] leading-relaxed text-black/65 dark:text-white/60">
         OpenMock puts your screenshots on 3D devices and turns them into promo videos. Everything
         runs in your browser: projects, media, and exports never leave this device. No accounts, no
-        watermarks, no quotas.
+        uploads. Images export free forever; Pro upgrades the video pipeline.
       </p>
 
       <ModalSection label="Details" />
