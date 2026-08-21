@@ -11,6 +11,7 @@ import { toast } from '../toast'
 const FEATURES = [
   'No watermark on video exports',
   'Video export in 1080p, 4K and 60 fps',
+  'Save and open project files',
   'Use on up to 3 devices',
   'Keeps OpenMock maintained and free for everyone else',
 ]

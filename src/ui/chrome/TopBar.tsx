@@ -17,6 +17,7 @@ import { ExportPopoverContent } from '../dialogs/ExportPopover'
 import { IS_MAC } from '../dialogs/ShortcutsModal'
 import { quickCapture, useExportApi } from './exportContext'
 import { openProjectPicker } from '../useMediaIngest'
+import { useIsPro } from '../../state/license'
 import { saveProjectFile } from '../../lib/projectFile'
 
 const MOD = IS_MAC ? '⌘' : 'Ctrl'
@@ -35,6 +36,7 @@ export function MasterMenu() {
   const setShortcutsOpen = useUI((s) => s.setShortcutsOpen)
   const setProOpen = useUI((s) => s.setProOpen)
   const setPreferencesOpen = useDialogs((s) => s.setPreferencesOpen)
+  const pro = useIsPro()
 
   return (
     <DropdownMenu.Root>
@@ -81,11 +83,17 @@ export function MasterMenu() {
             Keyboard shortcuts <span className={kbdCls}>?</span>
           </DropdownMenu.Item>
           <DropdownMenu.Separator className={menuSepCls} />
-          <DropdownMenu.Item className={menuItemCls} onSelect={() => void saveProjectFile()}>
-            Save project
+          <DropdownMenu.Item
+            className={menuItemCls}
+            onSelect={() => (pro ? void saveProjectFile() : setProOpen(true))}
+          >
+            Save project {!pro && <span className="text-[9px] font-semibold text-accent">PRO</span>}
           </DropdownMenu.Item>
-          <DropdownMenu.Item className={menuItemCls} onSelect={() => openProjectPicker()}>
-            Open project…
+          <DropdownMenu.Item
+            className={menuItemCls}
+            onSelect={() => (pro ? openProjectPicker() : setProOpen(true))}
+          >
+            Open project… {!pro && <span className="text-[9px] font-semibold text-accent">PRO</span>}
           </DropdownMenu.Item>
           <DropdownMenu.Item
             className={menuItemCls}

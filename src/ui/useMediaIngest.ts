@@ -12,6 +12,8 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
 import { useProject } from '../state/project'
+import { useUI } from '../state/ui'
+import { isProNow } from '../state/license'
 import { useSettings, type PasteBehavior } from '../state/settings'
 import {
   IMAGE_TYPES,
@@ -326,6 +328,11 @@ export async function ingestFiles(files: File[], target: IngestTarget): Promise<
 }
 
 async function confirmAndOpenProject(file: File): Promise<void> {
+  if (!isProNow()) {
+    toast('Saving and opening project files needs Pro.', 'info')
+    useUI.getState().setProOpen(true)
+    return
+  }
   const hasWork = useProject.getState().scenes.length > 0
   if (hasWork && !window.confirm('Open this project? The current project will be replaced.')) return
   const err = await openProjectFile(file)
