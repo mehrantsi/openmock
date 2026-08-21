@@ -101,6 +101,18 @@ export function useShotVideoElements(): ShotVideoElements {
       el.addEventListener('seeked', () => {
         if (!usePlayback.getState().scrubbing) requestViewportRender()
       })
+      // a freshly loaded element (boot hydrate, project open) becomes
+      // drawable after the state change already painted — park it at the
+      // playhead and repaint once a frame is actually presented
+      el.addEventListener('loadeddata', () => {
+        const pt = usePlayback.getState().projectTime
+        const active = resolveActiveClip(useProject.getState().scenes, pt)
+        if (active && active.video.videoId === videoId) {
+          exactSeek(el, clipSourceTime(active.video, active.localSec))
+        }
+        el.requestVideoFrameCallback?.(() => requestViewportRender())
+        requestViewportRender()
+      })
       entry = { el, url: null }
       pool.set(videoId, entry)
       void getMediaUrl(`media:${videoId}`).then((url) => {

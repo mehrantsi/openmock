@@ -16,6 +16,8 @@ import { useDialogs } from '../dialogs/dialogStore'
 import { ExportPopoverContent } from '../dialogs/ExportPopover'
 import { IS_MAC } from '../dialogs/ShortcutsModal'
 import { quickCapture, useExportApi } from './exportContext'
+import { openProjectPicker } from '../useMediaIngest'
+import { saveProjectFile } from '../../lib/projectFile'
 
 const MOD = IS_MAC ? '⌘' : 'Ctrl'
 
@@ -79,6 +81,12 @@ export function MasterMenu() {
             Keyboard shortcuts <span className={kbdCls}>?</span>
           </DropdownMenu.Item>
           <DropdownMenu.Separator className={menuSepCls} />
+          <DropdownMenu.Item className={menuItemCls} onSelect={() => void saveProjectFile()}>
+            Save project
+          </DropdownMenu.Item>
+          <DropdownMenu.Item className={menuItemCls} onSelect={() => openProjectPicker()}>
+            Open project…
+          </DropdownMenu.Item>
           <DropdownMenu.Item
             className={menuItemCls}
             onSelect={() => {

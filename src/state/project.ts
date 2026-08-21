@@ -148,6 +148,8 @@ interface ProjectStore {
 
   // persistence --------------------------------------------------------
   hydrate(): void
+  /** Replace the whole project from a document (project file import). */
+  loadProject(doc: ProjectDoc): boolean
   resetProject(): void
 }
 
@@ -748,30 +750,20 @@ export const useProject = create<ProjectStore>((set, get) => ({
     try {
       const raw = localStorage.getItem(STORAGE_KEY)
       if (!raw) return
-      const doc = JSON.parse(raw) as Project & { dials?: RenderState; selectedSceneId?: string | null }
-      if (!doc || typeof doc !== 'object') return
-      const scenes = (doc.timeline?.scenes ?? []).map((sc) => ({
-        ...sc,
-        duration: Math.min(MAX_SHOT_DURATION, Math.max(MIN_SHOT_DURATION, sc.duration || DEFAULT_SHOT_DURATION)),
-        keyframes: sc.keyframes ?? [],
-        transitionOut: sc.transitionOut ?? { kind: 'cut' as const },
-      }))
-      const first = scenes.find((x) => x.id === doc.selectedSceneId) ?? scenes[0]
-      set({
-        dials: doc.dials ? { ...DEFAULT_RENDER_STATE, ...doc.dials } : first?.baseState ? { ...DEFAULT_RENDER_STATE, ...first.baseState } : get().dials,
-        scenes,
-        sequenceDuration: doc.timeline?.sequenceDuration ?? DEFAULT_SEQUENCE_DURATION,
-        fadeIn: doc.timeline?.fadeIn ?? { kind: 'cut' },
-        fadeOut: doc.timeline?.fadeOut ?? { kind: 'cut' },
-        exportOptions: { ...get().exportOptions, ...doc.timeline?.exportOptions },
-        audioClips: doc.timeline?.audioClips ?? [],
-        videos: doc.videos ?? [],
-        audios: doc.audios ?? [],
-        selectedSceneId: first?.id ?? null,
-      })
+      const next = docToState(JSON.parse(raw) as ProjectDoc, get())
+      if (next) set(next)
     } catch (e) {
       console.warn('[openmock] failed to hydrate project', e)
     }
+  },
+
+  loadProject(doc) {
+    const next = docToState(doc, get())
+    if (!next || !next.scenes || next.scenes.length === 0) return false
+    pushHistory(get())
+    set(next)
+    scheduleSave()
+    return true
   },
 
   resetProject() {
@@ -791,7 +783,61 @@ export const useProject = create<ProjectStore>((set, get) => ({
   },
 }))
 
+/** The autosave / project-file document shape. */
+export type ProjectDoc = Project & { dials?: RenderState; selectedSceneId?: string | null }
+
+function docToState(
+  doc: ProjectDoc,
+  current: { dials: RenderState; exportOptions: VideoExportOptions },
+): Partial<ProjectStore> | null {
+  if (!doc || typeof doc !== 'object') return null
+  const scenes = (doc.timeline?.scenes ?? []).map((sc) => ({
+    ...sc,
+    duration: Math.min(MAX_SHOT_DURATION, Math.max(MIN_SHOT_DURATION, sc.duration || DEFAULT_SHOT_DURATION)),
+    keyframes: sc.keyframes ?? [],
+    transitionOut: sc.transitionOut ?? { kind: 'cut' as const },
+  }))
+  const first = scenes.find((x) => x.id === doc.selectedSceneId) ?? scenes[0]
+  return {
+    dials: doc.dials
+      ? { ...DEFAULT_RENDER_STATE, ...doc.dials }
+      : first?.baseState
+        ? { ...DEFAULT_RENDER_STATE, ...first.baseState }
+        : current.dials,
+    scenes,
+    sequenceDuration: doc.timeline?.sequenceDuration ?? DEFAULT_SEQUENCE_DURATION,
+    fadeIn: doc.timeline?.fadeIn ?? { kind: 'cut' },
+    fadeOut: doc.timeline?.fadeOut ?? { kind: 'cut' },
+    exportOptions: { ...current.exportOptions, ...doc.timeline?.exportOptions },
+    audioClips: doc.timeline?.audioClips ?? [],
+    videos: doc.videos ?? [],
+    audios: doc.audios ?? [],
+    selectedSceneId: first?.id ?? null,
+  }
+}
+
 // -- autosave -----------------------------------------------------------------
+
+export function buildProjectDoc(): ProjectDoc {
+  const s = useProject.getState()
+  return {
+    schemaVersion: 1,
+    openmockVersion: APP_VERSION,
+    dials: s.dials,
+    selectedSceneId: s.selectedSceneId,
+    viewportRatio: localStorage.getItem('openmock-viewport-ratio') ?? 'fill',
+    timeline: {
+      scenes: s.scenes,
+      sequenceDuration: s.sequenceDuration,
+      fadeIn: s.fadeIn,
+      fadeOut: s.fadeOut,
+      exportOptions: s.exportOptions,
+      audioClips: s.audioClips,
+    },
+    videos: s.videos,
+    audios: s.audios,
+  }
+}
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -799,24 +845,7 @@ export function scheduleSave(): void {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     saveTimer = null
-    const s = useProject.getState()
-    const doc = {
-      schemaVersion: 1,
-      openmockVersion: APP_VERSION,
-      dials: s.dials,
-      selectedSceneId: s.selectedSceneId,
-      viewportRatio: localStorage.getItem('openmock-viewport-ratio') ?? 'fill',
-      timeline: {
-        scenes: s.scenes,
-        sequenceDuration: s.sequenceDuration,
-        fadeIn: s.fadeIn,
-        fadeOut: s.fadeOut,
-        exportOptions: s.exportOptions,
-        audioClips: s.audioClips,
-      },
-      videos: s.videos,
-      audios: s.audios,
-    }
+    const doc = buildProjectDoc()
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(doc))
     } catch (e) {

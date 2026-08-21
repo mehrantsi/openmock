@@ -26,6 +26,7 @@ import {
   saveMediaBlob,
 } from '../lib/media'
 import { uid } from '../lib/ids'
+import { PROJECT_FILE_EXT, isProjectFile, openProjectFile } from '../lib/projectFile'
 import {
   MAX_PROJECT_VIDEOS,
   MAX_SHOT_DURATION,
@@ -283,6 +284,12 @@ export async function ingestFiles(files: File[], target: IngestTarget): Promise<
   const list = [...files]
   if (list.length === 0) return
 
+  const projectFile = list.find(isProjectFile)
+  if (projectFile) {
+    await confirmAndOpenProject(projectFile)
+    return
+  }
+
   // logo shots swallow the first PNG/SVG as their logo when replacing
   if (target === 'replace' && selectedShotIsLogo()) {
     const sel = selectedShot()
@@ -316,6 +323,26 @@ export async function ingestFiles(files: File[], target: IngestTarget): Promise<
     if (IMAGE_TYPES.includes(f.type)) await ingestImageFile(f, mode)
     else await ingestVideoFile(f, mode)
   }
+}
+
+async function confirmAndOpenProject(file: File): Promise<void> {
+  const hasWork = useProject.getState().scenes.length > 0
+  if (hasWork && !window.confirm('Open this project? The current project will be replaced.')) return
+  const err = await openProjectFile(file)
+  if (err) toast(err, 'error')
+  else toast('Project opened.', 'success')
+}
+
+/** Open a native picker for a .openmock project file. */
+export function openProjectPicker(): void {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = PROJECT_FILE_EXT
+  input.onchange = () => {
+    const f = input.files?.[0]
+    if (f) void confirmAndOpenProject(f)
+  }
+  input.click()
 }
 
 /** Open a native file picker and ingest the selection. */
