@@ -179,7 +179,9 @@ interface VideoPoolEntry {
  * container and codec allow it, hidden-element seeking otherwise.
  */
 async function loadVideoSource(blob: Blob): Promise<VideoPoolEntry> {
+  const t0 = performance.now()
   const server = await VideoFrameServer.create(blob)
+  console.info('[openmock export] video source:', server ? 'webcodecs' : 'element', `(${Math.round(performance.now() - t0)}ms init, ${Math.round(blob.size / 1e6)}MB)`)
   if (server) {
     const work = document.createElement('canvas')
     work.width = Math.max(2, server.width)

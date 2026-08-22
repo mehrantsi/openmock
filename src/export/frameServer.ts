@@ -19,8 +19,16 @@ interface SampleRef {
   data: Uint8Array
 }
 
-/** Extra samples fed past the target to satisfy decoder reordering. */
-const REORDER_SLACK = 24
+/**
+ * Samples fed past the target: covers decoder reordering AND keeps the
+ * decoder busy ahead of the export playhead so decode overlaps with
+ * render + encode instead of serializing with them.
+ */
+const LOOKAHEAD = 48
+/** Decoded frames held for upcoming targets (decoder frame pools are small). */
+const CACHE_MAX = 12
+/** Cap on cached + in-flight frames so lookahead can never outrun the cache. */
+const OUTSTANDING_MAX = 10
 
 function trackDescription(file: MP4Box.MP4File, trackId: number): Uint8Array | null {
   const trak = file.getTrackById(trackId)
@@ -62,6 +70,7 @@ export class VideoFrameServer {
   private decoder: VideoDecoder | null = null
   private nextFeed = 0
   private lastTargetIdx = -1
+  private cache = new Map<number, VideoFrame>()
   private current: VideoFrame | null = null
   private wantedUs = -1
   private waiting: { resolve: (f: VideoFrame | null) => void; timer: ReturnType<typeof setTimeout> } | null = null
@@ -86,7 +95,10 @@ export class VideoFrameServer {
   }
 
   static async create(blob: Blob): Promise<VideoFrameServer | null> {
-    if (typeof VideoDecoder === 'undefined') return null
+    if (typeof VideoDecoder === 'undefined') {
+      console.info('[openmock export] frame server: no VideoDecoder')
+      return null
+    }
     try {
       MP4Box.Log.setLogLevel(MP4Box.Log.error)
       const buf = (await blob.arrayBuffer()) as ArrayBuffer & { fileStart: number }
@@ -121,10 +133,19 @@ export class VideoFrameServer {
       }
       file.appendBuffer(buf)
       file.flush()
-      if (mp4Error || !info) return null
+      if (mp4Error || !info) {
+        console.info('[openmock export] frame server: parse failed', mp4Error)
+        return null
+      }
       const track = (info as MP4Box.MP4Info).videoTracks?.[0]
-      if (!track || !track.nb_samples) return null
-      if (samples.length === 0 || !samples.some((s) => s.keyframe)) return null
+      if (!track || !track.nb_samples) {
+        console.info('[openmock export] frame server: no video track')
+        return null
+      }
+      if (samples.length === 0 || !samples.some((s) => s.keyframe)) {
+        console.info('[openmock export] frame server: no samples extracted')
+        return null
+      }
 
       const description = trackDescription(file, track.id)
       const codedW = track.video?.width ?? track.track_width
@@ -135,8 +156,14 @@ export class VideoFrameServer {
         codedHeight: codedH,
         ...(description ? { description } : {}),
       }
-      const support = await VideoDecoder.isConfigSupported(config).catch(() => null)
-      if (!support?.supported) return null
+      const support = await VideoDecoder.isConfigSupported(config).catch((e) => {
+        console.info('[openmock export] frame server: isConfigSupported threw', String(e))
+        return null
+      })
+      if (!support?.supported) {
+        console.info('[openmock export] frame server: config unsupported', config.codec, 'desc:', !!config.description)
+        return null
+      }
       return new VideoFrameServer(samples, config, trackRotation(track.matrix), codedW, codedH)
     } catch {
       return null
@@ -160,13 +187,26 @@ export class VideoFrameServer {
       else hi = mid - 1
     }
     const target = this.ptsOrder[lo]
-    if (this.current && this.current.timestamp === target.ctsUs) return this.current
+    if (this.current && this.current.timestamp === target.ctsUs) {
+      this.lastTargetIdx = target.idx
+      this.pump(target.idx)
+      return this.current
+    }
+
+    // stale cache entries (behind the new target) are dead weight
+    for (const [ts, f] of this.cache) {
+      if (ts < target.ctsUs) {
+        f.close()
+        this.cache.delete(ts)
+      }
+    }
 
     // (re)start from the right keyframe when moving backward (loop wrap) or
     // jumping far ahead of the last served position
     const needsRestart =
       !this.decoder ||
       this.decoder.state === 'closed' ||
+      this.lastTargetIdx < 0 ||
       target.idx < this.lastTargetIdx ||
       target.idx > Math.max(this.lastTargetIdx, this.nextFeed) + 240
     if (needsRestart) {
@@ -176,6 +216,7 @@ export class VideoFrameServer {
         // already closed
       }
       this.decoder = this.makeDecoder()
+      this.clearCache()
       let key = 0
       for (let i = target.idx; i >= 0; i--) {
         if (this.samples[i].keyframe) {
@@ -187,9 +228,20 @@ export class VideoFrameServer {
     }
     this.lastTargetIdx = target.idx
 
+    // pipelined fast path: the frame was decoded ahead of time
+    const hit = this.cache.get(target.ctsUs)
+    if (hit) {
+      this.cache.delete(target.ctsUs)
+      this.current?.close()
+      this.current = hit
+      this.pump(target.idx)
+      return hit
+    }
+
     return new Promise<VideoFrame | null>((resolve) => {
       const timer = setTimeout(() => {
         // decoder wedged — give up on the server so callers fall back
+        console.info('[openmock export] frame server: decoder wedged at', tSec.toFixed(2), 's — dead')
         this.waiting = null
         this.dead = true
         resolve(null)
@@ -218,8 +270,8 @@ export class VideoFrameServer {
 
   private pump(targetIdx: number): void {
     if (!this.decoder || this.decoder.state !== 'configured') return
-    const stop = Math.min(this.samples.length - 1, targetIdx + REORDER_SLACK)
-    while (this.nextFeed <= stop && this.decoder.decodeQueueSize < 32) {
+    const stop = Math.min(this.samples.length - 1, targetIdx + LOOKAHEAD)
+    while (this.nextFeed <= stop && this.decoder.decodeQueueSize + this.cache.size < OUTSTANDING_MAX) {
       const s = this.samples[this.nextFeed++]
       this.decoder.decode(
         new EncodedVideoChunk({
@@ -237,19 +289,27 @@ export class VideoFrameServer {
   }
 
   private onFrame(frame: VideoFrame): void {
-    if (this.wantedUs < 0) {
-      frame.close()
-      return
-    }
     const end = frame.timestamp + (frame.duration ?? 0)
-    if (frame.timestamp >= this.wantedUs || end > this.wantedUs) {
+    const wanted = this.wantedUs
+    if (wanted >= 0 && (frame.timestamp === wanted || (frame.timestamp < wanted && end > wanted))) {
       this.current?.close()
       this.current = frame
       this.settle(frame)
+    } else if (
+      frame.timestamp > (wanted >= 0 ? wanted : this.current?.timestamp ?? -1) &&
+      this.cache.size < CACHE_MAX
+    ) {
+      // decoded ahead — keep for an upcoming target
+      this.cache.set(frame.timestamp, frame)
     } else {
       frame.close()
     }
     if (this.waiting) this.pump(this.lastTargetIdx)
+  }
+
+  private clearCache(): void {
+    for (const f of this.cache.values()) f.close()
+    this.cache.clear()
   }
 
   private settle(frame: VideoFrame | null): void {
@@ -278,6 +338,7 @@ export class VideoFrameServer {
   dispose(): void {
     this.dead = true
     this.settle(null)
+    this.clearCache()
     this.current?.close()
     this.current = null
     try {
