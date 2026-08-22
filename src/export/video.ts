@@ -224,25 +224,23 @@ const needsPresentWait =
   'requestVideoFrameCallback' in HTMLVideoElement.prototype
 
 /**
- * Presentation-wait cap: a seek landing inside the already-presented source
- * frame never presents a new one and must not stall the export.
+ * Presentation-wait cap after `seeked`. When the element's presentation
+ * callback is known to fire (it has before), a short cap only covers seeks
+ * that land inside the already-presented source frame — those never present
+ * a new one. Until the first callback proves itself, wait generously: Safari
+ * can present well after `seeked` under encoder load, and sampling early
+ * freezes the exported screen on a stale frame.
  */
-const PRESENT_GRACE_MS = 40
+const PRESENT_GRACE_FAST_MS = 60
+const PRESENT_GRACE_SLOW_MS = 250
 
-interface PresentedFrame {
-  mediaTime: number
-  frameDur: number
-}
-const presentedFrames = new WeakMap<HTMLVideoElement, PresentedFrame>()
+const rvfcProven = new WeakSet<HTMLVideoElement>()
 
 /** Seek a hidden video element and wait for the frame to land (5 s timeout). */
 function seekVideo(el: HTMLVideoElement, t: number): Promise<void> {
   const dur = Number.isFinite(el.duration) ? el.duration : Infinity
   const target = Math.max(0, Math.min(t, dur - 0.001))
   if (Math.abs(el.currentTime - target) < 1e-4 && el.readyState >= 2) return Promise.resolve()
-  const known = needsPresentWait ? presentedFrames.get(el) : undefined
-  const targetAlreadyPresented =
-    !!known && known.frameDur > 0 && target >= known.mediaTime && target < known.mediaTime + known.frameDur
   return new Promise((resolve, reject) => {
     let done = false
     let presented = false
@@ -261,23 +259,18 @@ function seekVideo(el: HTMLVideoElement, t: number): Promise<void> {
     const timer = setTimeout(() => finish(new Error('Timed out waiting for video seeked')), SEEK_TIMEOUT_MS)
     const onSeeked = () => {
       seeked = true
-      if (!needsPresentWait || presented || targetAlreadyPresented) finish()
-      else graceTimer = setTimeout(() => finish(), PRESENT_GRACE_MS)
+      if (!needsPresentWait || presented) finish()
+      else {
+        const grace = rvfcProven.has(el) ? PRESENT_GRACE_FAST_MS : PRESENT_GRACE_SLOW_MS
+        graceTimer = setTimeout(() => finish(), grace)
+      }
     }
     const onError = () => finish(new Error(`Video decode failed (${el.error?.code ?? 0})`))
     el.addEventListener('seeked', onSeeked)
     el.addEventListener('error', onError)
     if (needsPresentWait) {
-      // one-shot; deliberately not cancelled on finish so late presentations
-      // still record their mediaTime for the same-frame check above
-      el.requestVideoFrameCallback((_now, meta) => {
-        const prev = presentedFrames.get(el)
-        const delta = prev ? meta.mediaTime - prev.mediaTime : 0
-        presentedFrames.set(el, {
-          mediaTime: meta.mediaTime,
-          frameDur:
-            delta > 1e-4 ? (prev && prev.frameDur > 0 ? Math.min(prev.frameDur, delta) : delta) : (prev?.frameDur ?? 0),
-        })
+      el.requestVideoFrameCallback(() => {
+        rvfcProven.add(el)
         presented = true
         if (seeked) finish()
       })

@@ -39,6 +39,7 @@ export interface ShotVideoElements {
 interface PoolEntry {
   el: HTMLVideoElement
   url: string | null
+  seekingSince: number
 }
 
 interface ActiveClip {
@@ -113,7 +114,11 @@ export function useShotVideoElements(): ShotVideoElements {
         el.requestVideoFrameCallback?.(() => requestViewportRender())
         requestViewportRender()
       })
-      entry = { el, url: null }
+      entry = { el, url: null, seekingSince: 0 }
+      const created = entry
+      el.addEventListener('seeking', () => {
+        created.seekingSince = Date.now()
+      })
       pool.set(videoId, entry)
       void getMediaUrl(`media:${videoId}`).then((url) => {
         const live = pool.get(videoId)
@@ -185,9 +190,13 @@ export function useShotVideoElements(): ShotVideoElements {
       const active = resolveActiveClip(scenes, pt)
       pauseOthers(active?.video.videoId ?? null)
       if (!active) return
-      const el = ensure(active.video.videoId).el
+      const entry = ensure(active.video.videoId)
+      const el = entry.el
       if (!el.paused) el.pause()
-      if (el.readyState < 1 || el.seeking) return // approximate: never queue seeks
+      if (el.readyState < 1) return
+      // approximate: never queue seeks — but Safari can wedge `seeking` on,
+      // so a stale in-flight seek stops blocking after a second
+      if (el.seeking && Date.now() - entry.seekingSince < 1000) return
       const target = clipSourceTime(active.video, active.localSec)
       if (Math.abs(el.currentTime - target) < VIDEO_FRAME_EPS) return
       const fast = el as HTMLVideoElement & { fastSeek?: (t: number) => void }

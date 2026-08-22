@@ -106,7 +106,11 @@ export async function openProjectFile(file: Blob): Promise<string | null> {
     let offset = 12 + headerLen
     for (const m of header.media) {
       if (offset + m.size > file.size) return 'This project file is damaged.'
-      await saveMediaBlob(keyMap.get(m.key) ?? m.key, file.slice(offset, offset + m.size, m.type))
+      // materialize the bytes: storing a file-backed slice would leave the
+      // project referencing the .openmock file on disk (moves/deletes break
+      // it, and Safari seeks such blobs unreliably)
+      const bytes = await file.slice(offset, offset + m.size).arrayBuffer()
+      await saveMediaBlob(keyMap.get(m.key) ?? m.key, new Blob([bytes], { type: m.type }))
       offset += m.size
     }
 
