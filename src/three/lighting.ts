@@ -16,6 +16,7 @@ import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js'
 import { ENVIRONMENTS, LIGHTING_DEFAULTS, type EnvPreset } from './environments'
 import { deviceHdrPitch } from './devices/registry'
 import type { RenderParams } from './renderParams'
+import { patchGlowReflection, type GlowUniforms } from './glowRig'
 
 const DEG = Math.PI / 180
 
@@ -75,6 +76,8 @@ export class LightingSystem {
   private renderer: THREE.WebGLRenderer
   private scene: THREE.Scene
   private pmrem: THREE.PMREMGenerator
+  /** set by the engine so the env ground reflects screen content */
+  glowUniforms: GlowUniforms | null = null
   private equirectMode = false
   private roomRT: THREE.WebGLRenderTarget | null = null
   private defaultRT: THREE.WebGLRenderTarget | null = null
@@ -249,6 +252,7 @@ export class LightingSystem {
       envMap: g.litByIbl ? null : this.noIblTex,
       envMapIntensity: g.litByIbl ? 1 : 0,
     })
+    if (this.glowUniforms) patchGlowReflection(groundMat, this.glowUniforms)
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(g.size, g.size), groundMat)
     ground.rotation.x = -Math.PI / 2
     ground.position.y = g.y

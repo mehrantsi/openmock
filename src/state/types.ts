@@ -94,6 +94,8 @@ export interface RenderState {
   notchEnabled: boolean
   hdrYaw: number
   keyLight: number
+  /** screen content as a light source: body + scene glow/reflection (0-1) */
+  screenGlow: number
   keyLightHeight: number
   keyLightRotation: number
   contactShadow: boolean
@@ -437,6 +439,7 @@ export const DEFAULT_RENDER_STATE: RenderState = {
   notchEnabled: true,
   hdrYaw: 190,
   keyLight: 0,
+  screenGlow: 0,
   keyLightHeight: 5,
   keyLightRotation: 0,
   contactShadow: false,

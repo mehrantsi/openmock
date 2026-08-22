@@ -93,6 +93,7 @@ export function MockupSection() {
       dials.keyLight !== lighting.keyLight ||
       dials.keyLightHeight !== lighting.keyLightHeight ||
       dials.keyLightRotation !== lighting.keyLightRotation ||
+      dials.screenGlow !== 0 ||
       dials.contactShadow ||
       Object.keys(dials.deviceFeatures).length > 0)
 
@@ -109,6 +110,7 @@ export function MockupSection() {
       notchEnabled: true,
       contactShadow: false,
       deviceFeatures: {},
+      screenGlow: 0,
       ...lighting,
     }
     commitDials(patch, true)
@@ -301,6 +303,15 @@ export function MockupSection() {
               step={1}
               defaultValue={lighting.keyLightRotation}
               onChange={(v) => commitDials({ keyLightRotation: v })}
+            />
+            <DialSlider
+              label="Screen Glow"
+              value={dials.screenGlow}
+              min={0}
+              max={1}
+              step={0.01}
+              defaultValue={0}
+              onChange={(v) => commitDials({ screenGlow: v })}
             />
             <ToggleRow
               label="Contact Shadow"

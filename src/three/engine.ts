@@ -45,6 +45,7 @@ import {
   sanitizeCameraParams,
 } from './cameraRig'
 import { loadDeviceModel, applyModelFrame } from './devices/loader'
+import { GlowRig, patchModelGlow } from './glowRig'
 import { DeviceScreenComposer } from './devices/deviceScreen'
 import { webkitVideoPresentQuirk } from '../lib/browser'
 
@@ -133,6 +134,8 @@ export function createEngine(canvas: HTMLCanvasElement, opts: EngineOptions = {}
 
   const lighting = new LightingSystem(renderer, scene)
   const screenComposer = new DeviceScreenComposer(renderer)
+  const glow = new GlowRig(renderer, scene)
+  lighting.glowUniforms = glow.uniforms
 
   // ---- composer chain ----------------------------------------------------
   const composerTarget = new THREE.WebGLRenderTarget(1, 1, {
@@ -299,6 +302,7 @@ export function createEngine(canvas: HTMLCanvasElement, opts: EngineOptions = {}
             emitModelLoad(modelId, true, p),
           )
           models.set(modelId, model)
+          patchModelGlow(model, glow.uniforms)
           modelGroup.add(model.wrapper)
           model.wrapper.visible = false
           emitModelLoad(modelId, false, 1)
@@ -427,6 +431,12 @@ export function createEngine(canvas: HTMLCanvasElement, opts: EngineOptions = {}
       modelGroup.position,
       model ? lowestCornerY(model.localAABB, flapQuat) : 0,
     )
+
+    // screen-content glow (rect light + reflection uniforms)
+    const glowAmbient = preset
+      ? Math.min(1, preset.hdriIntensity * 2)
+      : Math.min(1, 0.2126 * params.bgColor[0] + 0.7152 * params.bgColor[1] + 0.0722 * params.bgColor[2])
+    glow.update(model, params.screenGlow ?? 0, screenComposer.texture, camera, glowAmbient)
 
     // clear color
     if (params.transparentBg) {
@@ -728,6 +738,7 @@ export function createEngine(canvas: HTMLCanvasElement, opts: EngineOptions = {}
     models.clear()
     pendingModels.clear()
     screenComposer.dispose()
+    glow.dispose()
     flat.dispose()
     background.dispose()
     lighting.dispose()

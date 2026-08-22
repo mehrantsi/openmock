@@ -85,6 +85,7 @@ export interface RenderParams {
   notchEnabled: boolean
   hdrYaw: number
   keyLight: number
+  screenGlow: number
   keyLightHeight: number
   keyLightRotation: number
   contactShadow: boolean
@@ -201,6 +202,7 @@ export function toRenderParams(s: RenderState, rt: RuntimeOverrides = {}): Rende
     notchEnabled: s.notchEnabled,
     hdrYaw: s.hdrYaw,
     keyLight: s.keyLight,
+    screenGlow: s.screenGlow ?? 0,
     keyLightHeight: s.keyLightHeight,
     keyLightRotation: s.keyLightRotation,
     contactShadow: s.contactShadow,
