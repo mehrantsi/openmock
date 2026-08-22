@@ -18,6 +18,7 @@ import {
   ORIENTATION_SIZES,
   RATIO_DEFAULT_SIZE,
   lookupResolution,
+  pickAvcCodec,
   resolveExportSize,
   videoBitrate,
 } from '../../export/resolutions'
@@ -69,10 +70,12 @@ const MOTION_DESC: Record<MotionBlurLevel, string> = {
   high: 'Long, dramatic blur trails. Slower export.',
 }
 
-function orientationOf(size: string): Orientation | null {
+function orientationOf(size: string, customW?: number, customH?: number): Orientation | null {
   for (const o of ['landscape', 'square', 'portrait'] as const) {
     if (ORIENTATION_SIZES[o].includes(size)) return o
   }
+  const r = size === 'custom' && customW && customH ? { width: customW, height: customH } : lookupResolution(size)
+  if (r) return r.width > r.height ? 'landscape' : r.width < r.height ? 'portrait' : 'square'
   return null
 }
 
@@ -388,7 +391,10 @@ function VideoTab({ onStarted }: { onStarted: () => void }) {
   const scenes = useProject((s) => s.scenes)
   const selectedSceneId = useProject((s) => s.selectedSceneId)
   const addKeyframe = useProject((s) => s.addKeyframe)
-  const [orientation, setOrientation] = useState<Orientation>(() => orientationOf(opts.size) ?? 'landscape')
+  const [orientation, setOrientation] = useState<Orientation>(
+    () => orientationOf(opts.size, opts.customWidth, opts.customHeight) ?? 'landscape',
+  )
+  const [softwareEncode, setSoftwareEncode] = useState(false)
 
   const busy = ex?.phase === 'rendering'
   const ready = ex?.canExportVideo ?? false
@@ -431,6 +437,26 @@ function VideoTab({ onStarted }: { onStarted: () => void }) {
   const { width, height } = resolveExportSize(opts.size, opts.customWidth, opts.customHeight, 'video')
   const mbps = Math.round(videoBitrate(opts.quality, width, height) / 1e6)
   const effFps = !pro && opts.fps === 60 ? 30 : opts.fps
+
+  useEffect(() => {
+    let cancelled = false
+    setSoftwareEncode(false)
+    if (typeof VideoEncoder === 'undefined') return
+    void VideoEncoder.isConfigSupported({
+      codec: pickAvcCodec(width, height, effFps),
+      width,
+      height,
+      framerate: effFps,
+      hardwareAcceleration: 'prefer-hardware',
+    })
+      .then((s) => {
+        if (!cancelled) setSoftwareEncode(!s.supported)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [width, height, effFps])
 
   return (
     <div className="flex flex-col gap-3">
@@ -527,6 +553,12 @@ function VideoTab({ onStarted }: { onStarted: () => void }) {
           </span>
         </div>
         <div className="text-[10px] text-black/45 dark:text-white/40">{QUALITY_DESC[opts.quality]}</div>
+        {softwareEncode && (
+          <div className="text-[10px] leading-snug text-amber-700 dark:text-amber-400 mt-1">
+            No hardware encoder for this size in this browser — export will be slow. A smaller size
+            (1080p) exports much faster.
+          </div>
+        )}
       </div>
 
       {!pro && (
