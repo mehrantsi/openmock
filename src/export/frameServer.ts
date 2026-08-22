@@ -26,9 +26,17 @@ interface SampleRef {
  */
 const LOOKAHEAD = 48
 /** Decoded frames held for upcoming targets (decoder frame pools are small). */
-const CACHE_MAX = 12
+const CACHE_MAX = 18
 /** Cap on cached + in-flight frames so lookahead can never outrun the cache. */
 const OUTSTANDING_MAX = 10
+/**
+ * Until a decoder instance emits its first frame it may legitimately hold a
+ * deep pipeline (Safari buffers far more input than Chromium before emitting
+ * anything), so the feed depth is raised until output proves the pipe flows.
+ */
+const FIRST_BURST = 16
+/** Waiting this long with a stalled pipe triggers a flush rescue. */
+const RESCUE_MS = 1500
 
 function trackDescription(file: MP4Box.MP4File, trackId: number): Uint8Array | null {
   const trak = file.getTrackById(trackId)
@@ -71,6 +79,9 @@ export class VideoFrameServer {
   private nextFeed = 0
   private lastTargetIdx = -1
   private cache = new Map<number, VideoFrame>()
+  private everOutput = false
+  private needKeyRestart = false
+  private lastEmittedUs = -1
   private current: VideoFrame | null = null
   private wantedUs = -1
   private waiting: { resolve: (f: VideoFrame | null) => void; timer: ReturnType<typeof setTimeout> } | null = null
@@ -187,7 +198,11 @@ export class VideoFrameServer {
       else hi = mid - 1
     }
     const target = this.ptsOrder[lo]
-    if (this.current && this.current.timestamp === target.ctsUs) {
+    if (
+      this.current &&
+      this.current.timestamp <= target.ctsUs &&
+      this.current.timestamp + (this.current.duration ?? 0) > target.ctsUs
+    ) {
       this.lastTargetIdx = target.idx
       this.pump(target.idx)
       return this.current
@@ -206,32 +221,25 @@ export class VideoFrameServer {
     const needsRestart =
       !this.decoder ||
       this.decoder.state === 'closed' ||
+      this.needKeyRestart ||
       this.lastTargetIdx < 0 ||
       target.idx < this.lastTargetIdx ||
-      target.idx > Math.max(this.lastTargetIdx, this.nextFeed) + 240
-    if (needsRestart) {
-      try {
-        this.decoder?.close()
-      } catch {
-        // already closed
-      }
-      this.decoder = this.makeDecoder()
-      this.clearCache()
-      let key = 0
-      for (let i = target.idx; i >= 0; i--) {
-        if (this.samples[i].keyframe) {
-          key = i
-          break
-        }
-      }
-      this.nextFeed = key
-    }
+      target.idx > Math.max(this.lastTargetIdx, this.nextFeed) + 240 ||
+      // the decoder emitted well past this frame and nothing cached covers
+      // it: it was lost (evicted/dropped) — only a keyframe restart helps.
+      // Slack matters: output timestamps may be reassigned on VFR streams
+      (this.lastEmittedUs > target.ctsUs + 2 * (target.durUs || 33000) &&
+        this.cacheNear(target.ctsUs, target.durUs) < 0)
+    if (needsRestart) this.restartAt(target.idx)
     this.lastTargetIdx = target.idx
 
-    // pipelined fast path: the frame was decoded ahead of time
-    const hit = this.cache.get(target.ctsUs)
-    if (hit) {
-      this.cache.delete(target.ctsUs)
+    // pipelined fast path: the frame was decoded ahead of time. Exact match
+    // first; otherwise the nearest cached frame just after the target covers
+    // timestamp-reassigned streams (one frame of slack at most)
+    const hitTs = this.cacheNear(target.ctsUs, target.durUs)
+    if (hitTs >= 0) {
+      const hit = this.cache.get(hitTs)!
+      this.cache.delete(hitTs)
       this.current?.close()
       this.current = hit
       this.pump(target.idx)
@@ -240,19 +248,86 @@ export class VideoFrameServer {
 
     return new Promise<VideoFrame | null>((resolve) => {
       const timer = setTimeout(() => {
-        // decoder wedged — give up on the server so callers fall back
-        console.info('[openmock export] frame server: decoder wedged at', tSec.toFixed(2), 's — dead')
+        // decoder wedged despite the rescue — give up on the server
+        console.warn(
+          '[openmock export] frame server: decoder wedged at', tSec.toFixed(2),
+          's — dead | target', target.idx, target.ctsUs,
+          '| nextFeed', this.nextFeed,
+          '| emitted', this.lastEmittedUs,
+          '| cache', [...this.cache.keys()].slice(0, 6).join(','),
+          '| queue', this.decoder?.decodeQueueSize,
+          '| state', this.decoder?.state,
+          '| needKey', this.needKeyRestart,
+          '| sample', JSON.stringify({ k: this.samples[target.idx]?.keyframe, dur: this.samples[target.idx]?.durUs }),
+        )
         this.waiting = null
         this.dead = true
         resolve(null)
-      }, 10000)
-      this.waiting = { resolve, timer }
+      }, 6000)
+      // stalled pipe rescue: flush the decoder to force out buffered frames.
+      // Feeding is gated while the flush is pending (post-flush chunks must
+      // start at a keyframe); if the wanted frame still doesn't surface, a
+      // hard restart re-decodes from the target's keyframe
+      const rescue = setTimeout(() => {
+        if (!this.waiting || !this.decoder || this.decoder.state !== 'configured') return
+        this.needKeyRestart = true
+        this.decoder
+          .flush()
+          .catch(() => {})
+          .then(() => {
+            if (!this.waiting) {
+              this.needKeyRestart = true
+              return
+            }
+            this.restartAt(target.idx)
+            this.pump(target.idx)
+          })
+      }, RESCUE_MS)
+      this.waiting = {
+        resolve: (f) => {
+          clearTimeout(rescue)
+          resolve(f)
+        },
+        timer,
+      }
       this.wantedUs = target.ctsUs
       this.pump(target.idx)
     })
   }
 
+  /** Nearest cached timestamp covering `ctsUs` (exact or within one frame). */
+  private cacheNear(ctsUs: number, durUs: number): number {
+    if (this.cache.has(ctsUs)) return ctsUs
+    let best = Infinity
+    for (const ts of this.cache.keys()) {
+      if (ts > ctsUs && ts < best) best = ts
+    }
+    return best - ctsUs <= (durUs || 40000) + 1000 ? best : -1
+  }
+
+  /** Fresh decoder, fed from the nearest keyframe at or before `idx`. */
+  private restartAt(idx: number): void {
+    try {
+      this.decoder?.close()
+    } catch {
+      // already closed
+    }
+    this.decoder = this.makeDecoder()
+    this.needKeyRestart = false
+    this.lastEmittedUs = -1
+    this.clearCache()
+    let key = 0
+    for (let i = idx; i >= 0; i--) {
+      if (this.samples[i].keyframe) {
+        key = i
+        break
+      }
+    }
+    this.nextFeed = key
+  }
+
   private makeDecoder(): VideoDecoder {
+    this.everOutput = false
     const decoder = new VideoDecoder({
       output: (frame) => this.onFrame(frame),
       error: () => {
@@ -269,9 +344,10 @@ export class VideoFrameServer {
   }
 
   private pump(targetIdx: number): void {
-    if (!this.decoder || this.decoder.state !== 'configured') return
+    if (!this.decoder || this.decoder.state !== 'configured' || this.needKeyRestart) return
     const stop = Math.min(this.samples.length - 1, targetIdx + LOOKAHEAD)
-    while (this.nextFeed <= stop && this.decoder.decodeQueueSize + this.cache.size < OUTSTANDING_MAX) {
+    const depth = this.everOutput ? OUTSTANDING_MAX : FIRST_BURST
+    while (this.nextFeed <= stop && this.decoder.decodeQueueSize + this.cache.size < depth) {
       const s = this.samples[this.nextFeed++]
       this.decoder.decode(
         new EncodedVideoChunk({
@@ -289,18 +365,35 @@ export class VideoFrameServer {
   }
 
   private onFrame(frame: VideoFrame): void {
+    this.everOutput = true
+    if (frame.timestamp > this.lastEmittedUs) this.lastEmittedUs = frame.timestamp
     const end = frame.timestamp + (frame.duration ?? 0)
     const wanted = this.wantedUs
-    if (wanted >= 0 && (frame.timestamp === wanted || (frame.timestamp < wanted && end > wanted))) {
+    // outputs arrive in presentation order, but decoders may reassign
+    // timestamps on reordered/VFR streams — the first frame that ends after
+    // the wanted time is the best (usually exact) match; demanding equality
+    // leaves permanent holes
+    if (wanted >= 0 && end > wanted) {
       this.current?.close()
       this.current = frame
       this.settle(frame)
-    } else if (
-      frame.timestamp > (wanted >= 0 ? wanted : this.current?.timestamp ?? -1) &&
-      this.cache.size < CACHE_MAX
-    ) {
-      // decoded ahead — keep for an upcoming target
-      this.cache.set(frame.timestamp, frame)
+    } else if (frame.timestamp > (wanted >= 0 ? wanted : this.current?.timestamp ?? -1)) {
+      // decoded ahead — keep for an upcoming target. When full, evict the
+      // farthest-future frame: the consumer advances monotonically, so the
+      // nearest frames matter most (a lost frame self-heals via restart)
+      if (this.cache.size >= CACHE_MAX) {
+        let farTs = -1
+        for (const ts of this.cache.keys()) if (ts > farTs) farTs = ts
+        if (frame.timestamp < farTs) {
+          this.cache.get(farTs)?.close()
+          this.cache.delete(farTs)
+          this.cache.set(frame.timestamp, frame)
+        } else {
+          frame.close()
+        }
+      } else {
+        this.cache.set(frame.timestamp, frame)
+      }
     } else {
       frame.close()
     }
