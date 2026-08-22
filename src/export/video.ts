@@ -14,11 +14,10 @@
  *     keyframes every 2 s, backpressure, abort and stall guards
  *  5. flush (30 s timeout), finalize the muxer, return the MP4 blob
  *
- * Imported videos are frame-served by seeking a hidden HTMLVideoElement per
- * frame (await `seeked`, 5 s timeout).
- * TODO: a WebCodecs demux path (mp4box-style sample feeding) would decode
- * MP4 sources much faster than <video> seeking; the element fallback is the
- * only pipeline implemented for now and handles MP4/WebM/MOV alike.
+ * Imported MP4/MOV videos are frame-served by a WebCodecs demux/decode
+ * pipeline (frameServer.ts) — deterministic and Safari-safe. Containers or
+ * codecs it can't serve (WebM, unsupported profiles) fall back to seeking a
+ * hidden HTMLVideoElement per frame (await `seeked`, 5 s timeout).
  */
 
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer'
@@ -58,6 +57,7 @@ import {
   type CameraMotionSample,
 } from './motionBlur'
 import { webkitVideoPresentQuirk } from '../lib/browser'
+import { VideoFrameServer } from './frameServer'
 
 export interface VideoExportArgs {
   scenes: Shot[]
@@ -168,9 +168,25 @@ function drawWatermark(ctx: CanvasRenderingContext2D, w: number, h: number, mark
 }
 
 interface VideoPoolEntry {
-  el: HTMLVideoElement
-  url: string
+  el: HTMLVideoElement | null
+  url: string | null
   work: HTMLCanvasElement
+  server: VideoFrameServer | null
+}
+
+/**
+ * Frame source for one project video: WebCodecs demux/decode when the
+ * container and codec allow it, hidden-element seeking otherwise.
+ */
+async function loadVideoSource(blob: Blob): Promise<VideoPoolEntry> {
+  const server = await VideoFrameServer.create(blob)
+  if (server) {
+    const work = document.createElement('canvas')
+    work.width = Math.max(2, server.width)
+    work.height = Math.max(2, server.height)
+    return { el: null, url: null, work, server }
+  }
+  return loadVideoElement(blob)
 }
 
 function loadVideoElement(blob: Blob): Promise<VideoPoolEntry> {
@@ -199,7 +215,7 @@ function loadVideoElement(blob: Blob): Promise<VideoPoolEntry> {
       const work = document.createElement('canvas')
       work.width = Math.max(2, el.videoWidth)
       work.height = Math.max(2, el.videoHeight)
-      resolve({ el, url, work })
+      resolve({ el, url, work, server: null })
     }
     const onError = () => {
       cleanup()
@@ -388,7 +404,7 @@ export async function exportVideo(args: VideoExportArgs): Promise<VideoExportRes
         }
         let pool = videoPool.get(shot.video.videoId)
         if (!pool) {
-          pool = await loadVideoElement(blob)
+          pool = await loadVideoSource(blob)
           videoPool.set(shot.video.videoId, pool)
         }
         shotMedia.set(shot.id, { kind: 'video', video: shot.video, pool })
@@ -611,10 +627,16 @@ export async function exportVideo(args: VideoExportArgs): Promise<VideoExportRes
       // screen media
       if (media?.kind === 'video' && media.pool && media.video) {
         const t = clipSourceTime(media.video, localT * shot.duration)
-        await seekVideo(media.pool.el, t)
         const work = media.pool.work
         const wctx = work.getContext('2d')
-        if (wctx) wctx.drawImage(media.pool.el, 0, 0, work.width, work.height)
+        if (media.pool.server) {
+          const frame = await media.pool.server.frameAt(Math.min(t, media.pool.server.durationSec - 1e-4))
+          // a null frame means the decoder died — keep the last drawn frame
+          if (frame && wctx) media.pool.server.drawTo(wctx, frame, work.width, work.height)
+        } else if (media.pool.el) {
+          await seekVideo(media.pool.el, t)
+          if (wctx) wctx.drawImage(media.pool.el, 0, 0, work.width, work.height)
+        }
         const key = `video:${media.video.videoId}`
         if (mediaKey !== key) {
           engine.setMedia({ kind: 'frame', element: work })
@@ -851,14 +873,17 @@ export async function exportVideo(args: VideoExportArgs): Promise<VideoExportRes
     accumulator?.dispose()
     engine.dispose()
     for (const entry of videoPool.values()) {
-      entry.el.removeAttribute('src')
-      try {
-        entry.el.load()
-      } catch {
-        // already torn down — nothing to do
+      entry.server?.dispose()
+      if (entry.el) {
+        entry.el.removeAttribute('src')
+        try {
+          entry.el.load()
+        } catch {
+          // already torn down — nothing to do
+        }
+        entry.el.remove()
       }
-      entry.el.remove()
-      URL.revokeObjectURL(entry.url)
+      if (entry.url) URL.revokeObjectURL(entry.url)
     }
     for (const entry of imageCache.values()) entry.bitmap.close()
     disposeLogoExportPool()

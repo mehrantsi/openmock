@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "license": "FSL-1.1-MIT",
   "type": "module",
-  "description": "OpenMock \u2014 open-source cinematic device mockups and promo videos in the browser",
+  "description": "OpenMock — open-source cinematic device mockups and promo videos in the browser",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -23,6 +23,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "lucide-react": "^0.544.0",
     "mp4-muxer": "^5.2.1",
+    "mp4box": "^2.4.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "three": "^0.180.0",
